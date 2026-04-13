@@ -1,0 +1,33 @@
+services:
+  mcp-bridge:
+    build: ./mcp-server
+    restart: unless-stopped
+    env_file: ./mcp-server/.env
+    environment:
+      - PORT=3201
+    network_mode: host
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - DB_TYPE=sqlite
+      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
+      - N8N_HOST=deveps.ddns.net
+      - N8N_PROTOCOL=https
+      - N8N_PORT=5678
+      - N8N_EDITOR_BASE_URL=https://deveps.ddns.net/n8n
+      - WEBHOOK_URL=https://deveps.ddns.net/n8n/
+      - GENERIC_TIMEZONE=Europe/Madrid
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_RUNNERS_ENABLED=false
+    volumes:
+      - ./data/n8n:/home/node/.n8n
+    networks:
+      - orderflow-net
+
+networks:
+  orderflow-net:
+    driver: bridge

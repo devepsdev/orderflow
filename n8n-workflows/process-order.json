@@ -1,0 +1,163 @@
+{
+  "name": "OrderFlow - Procesar Pedido",
+  "nodes": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-order",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "Preparar contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const wb = $input.first().json;\nconst body = wb.body ?? wb;\n\nconst source     = body.source     ?? 'email';\nconst from       = body.from       ?? '';\nconst subject    = body.subject    ?? '';\nconst content    = body.body       ?? body.content ?? '';\nconst source_ref = body.source_ref ?? '';\n\nconst systemPrompt = `Eres un agente de procesamiento de pedidos para OrderFlow.\nTu trabajo es analizar pedidos que llegan por email u otros canales,\nextraer la informaci\u00f3n relevante, y usar las herramientas disponibles para procesarlos.\n\nPROCESO:\n1. Analiza el contenido del pedido (asunto + cuerpo del mensaje)\n2. Identifica el proveedor mencionado. Usa search_suppliers para buscarlo.\n3. Si encuentras el proveedor, usa get_supplier_products para ver sus productos disponibles.\n4. Comprueba duplicados con check_duplicate_order.\n5. Si no es duplicado, usa create_order para crear el pedido con los items detectados.\n6. Responde SOLO con un JSON con esta estructura exacta:\n   { \"status\": \"success\", \"order_id\": 123, \"supplier\": \"Nombre\", \"items_count\": 3, \"confidence\": 0.95, \"message\": \"Pedido creado\" }\n\nSi no puedes identificar el proveedor: status \"error\".\nSi es duplicado: status \"duplicate\" y order_id del pedido existente.`;\n\nconst userMessage = `Procesa este pedido:\nOrigen: ${source}\nDe: ${from}\nAsunto: ${subject}\nReferencia: ${source_ref}\n\nContenido:\n${content}`;\n\nconst messages = [\n  { role: 'system', content: systemPrompt },\n  { role: 'user',   content: userMessage  },\n];\n\nconst tools = [\n  {\n    type: 'function',\n    function: {\n      name: 'search_suppliers',\n      description: 'Busca proveedores por nombre o categor\u00eda',\n      parameters: {\n        type: 'object',\n        properties: {\n          query:       { type: 'string',  description: 'Texto a buscar en nombre' },\n          category:    { type: 'string',  description: 'Categor\u00eda (frutas, carne, bebidas...)' },\n          active_only: { type: 'boolean', description: 'Solo activos', default: true },\n        },\n      },\n    },\n  },\n  {\n    type: 'function',\n    function: {\n      name: 'get_supplier_products',\n      description: 'Lista productos de un proveedor',\n      parameters: {\n        type: 'object',\n        properties: {\n          supplier_id: { type: 'number', description: 'ID del proveedor' },\n          active_only: { type: 'boolean', description: 'Solo activos', default: true },\n        },\n        required: ['supplier_id'],\n      },\n    },\n  },\n  {\n    type: 'function',\n    function: {\n      name: 'create_order',\n      description: 'Crea un nuevo pedido con sus l\u00edneas',\n      parameters: {\n        type: 'object',\n        properties: {\n          supplier_id: { type: 'number', description: 'ID del proveedor' },\n          source:      { type: 'string', description: 'Origen: email, web, manual' },\n          raw_content: { type: 'string', description: 'Texto original del pedido' },\n          source_ref:  { type: 'string', description: 'Referencia externa' },\n          items: {\n            type: 'array',\n            items: {\n              type: 'object',\n              properties: {\n                product_name: { type: 'string' },\n                quantity:     { type: 'number' },\n                unit:         { type: 'string' },\n              },\n              required: ['product_name', 'quantity', 'unit'],\n            },\n          },\n        },\n        required: ['supplier_id', 'source', 'raw_content', 'items'],\n      },\n    },\n  },\n  {\n    type: 'function',\n    function: {\n      name: 'check_duplicate_order',\n      description: 'Comprueba si existe un pedido similar reciente',\n      parameters: {\n        type: 'object',\n        properties: {\n          supplier_id:  { type: 'number', description: 'ID del proveedor' },\n          source_ref:   { type: 'string', description: 'Referencia externa' },\n          hours_window: { type: 'number', description: 'Ventana en horas', default: 24 },\n        },\n        required: ['supplier_id'],\n      },\n    },\n  },\n  {\n    type: 'function',\n    function: {\n      name: 'update_order_status',\n      description: 'Actualiza el estado de un pedido',\n      parameters: {\n        type: 'object',\n        properties: {\n          order_id: { type: 'number', description: 'ID del pedido' },\n          status:   { type: 'string', enum: ['pending','validated','confirmed','sent','delivered','cancelled','error'] },\n          notes:    { type: 'string', description: 'Notas opcionales' },\n        },\n        required: ['order_id', 'status'],\n      },\n    },\n  },\n  {\n    type: 'function',\n    function: {\n      name: 'get_order_summary',\n      description: 'Resumen de pedidos recientes',\n      parameters: {\n        type: 'object',\n        properties: {\n          days:   { type: 'number', description: 'D\u00edas hacia atr\u00e1s', default: 7 },\n          status: { type: 'string', enum: ['pending','validated','confirmed','sent','delivered','cancelled','error'] },\n        },\n      },\n    },\n  },\n];\n\nconst deepseek_request = {\n  model: 'deepseek-chat',\n  messages,\n  tools,\n  tool_choice: 'auto',\n  temperature: 0.1,\n};\n\nreturn [{ json: { messages, tools, source, source_ref, raw_content: content, deepseek_request } }];"
+      }
+    },
+    {
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Llamar DeepSeek",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.deepseek_request) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PENDIENTE_CONFIGURAR",
+          "name": "DeepSeek API"
+        }
+      }
+    },
+    {
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "Procesar tool calls",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Respuesta inicial de DeepSeek\nconst firstResponse = $input.first().json;\n\n// Contexto del nodo anterior (mensajes, tools, source info)\nconst context = $('Preparar contexto').first().json;\n\n// API key de DeepSeek \u2014 configura DEEPSEEK_API_KEY en n8n:\n// Settings > Variables > New Variable > DEEPSEEK_API_KEY\nconst DEEPSEEK_API_KEY = $env.DEEPSEEK_API_KEY ?? '';\nconst MCP_URL = 'http://127.0.0.1:3200/tools';\nconst MAX_ITER = 8;\n\nlet messages = [...context.messages];\nconst tools  = context.tools;\n\nconst firstChoice = firstResponse.choices?.[0];\nif (!firstChoice) {\n  return [{ json: { status: 'error', order_id: null, supplier: null, items_count: 0, confidence: 0, message: 'Sin respuesta de DeepSeek' } }];\n}\nmessages.push(firstChoice.message);\n\nlet finalContent = null;\n\nfor (let iter = 0; iter < MAX_ITER; iter++) {\n  const lastMsg = messages[messages.length - 1];\n\n  // Sin tool_calls \u2192 respuesta final\n  if (!lastMsg.tool_calls || lastMsg.tool_calls.length === 0) {\n    finalContent = lastMsg.content;\n    break;\n  }\n\n  // Ejecutar cada tool call contra el HTTP Bridge\n  for (const tc of lastMsg.tool_calls) {\n    let args;\n    try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }\n\n    let toolResult;\n    try {\n      const r = await fetch(`${MCP_URL}/${tc.function.name}`, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify(args),\n      });\n      toolResult = await r.json();\n    } catch (e) {\n      toolResult = { error: `Tool call fall\u00f3: ${e.message}` };\n    }\n\n    messages.push({\n      role: 'tool',\n      tool_call_id: tc.id,\n      content: JSON.stringify(toolResult),\n    });\n  }\n\n  // Nueva llamada a DeepSeek con el historial completo\n  try {\n    const r = await fetch('https://api.deepseek.com/v1/chat/completions', {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,\n      },\n      body: JSON.stringify({ model: 'deepseek-chat', messages, tools, tool_choice: 'auto', temperature: 0.1 }),\n    });\n    if (!r.ok) {\n      const txt = await r.text();\n      return [{ json: { status: 'error', order_id: null, supplier: null, items_count: 0, confidence: 0, message: `DeepSeek error ${r.status}: ${txt}` } }];\n    }\n    const data = await r.json();\n    const choice = data.choices?.[0];\n    if (!choice) break;\n    messages.push(choice.message);\n  } catch (e) {\n    return [{ json: { status: 'error', order_id: null, supplier: null, items_count: 0, confidence: 0, message: `DeepSeek request fall\u00f3: ${e.message}` } }];\n  }\n}\n\n// Si se agotaron las iteraciones sin respuesta final\nif (finalContent === null) {\n  const last = messages[messages.length - 1];\n  finalContent = last?.content ?? '';\n}\n\n// Parsear JSON de la respuesta final\nlet result;\ntry {\n  const match = finalContent.match(/\\{[\\s\\S]*\\}/);\n  result = match ? JSON.parse(match[0]) : { status: 'error', order_id: null, supplier: null, items_count: 0, confidence: 0, message: finalContent };\n} catch {\n  result = { status: 'error', order_id: null, supplier: null, items_count: 0, confidence: 0, message: finalContent };\n}\n\nreturn [{ json: result }];"
+      }
+    },
+    {
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "Resultado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Preparar contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar contexto": {
+      "main": [
+        [
+          {
+            "node": "Llamar DeepSeek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar DeepSeek": {
+      "main": [
+        [
+          {
+            "node": "Procesar tool calls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar tool calls": {
+      "main": [
+        [
+          {
+            "node": "Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "orderflow"
+  },
+  "tags": []
+}
