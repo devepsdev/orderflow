@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import { healthCheck } from './abasta-client.js';
+import { healthCheck } from './pedidoo-client.js';
 import {
   TOOL_SCHEMAS,
   search_suppliers, get_supplier_products, create_order, send_order,
@@ -27,9 +27,9 @@ const HANDLERS = {
 app.get('/health', async (_req, res) => {
   try {
     const data = await healthCheck();
-    res.json({ status: 'ok', abasta: 'connected', tools: Object.keys(HANDLERS).length, dashboard: data });
+    res.json({ status: 'ok', pedidoo: 'connected', tools: Object.keys(HANDLERS).length, dashboard: data });
   } catch (err) {
-    res.status(503).json({ status: 'error', abasta: err.message });
+    res.status(503).json({ status: 'error', pedidoo: err.message });
   }
 });
 
@@ -50,8 +50,8 @@ app.post('/tools/:toolName', async (req, res) => {
 });
 
 // ─── Agentic order processing ─────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Eres un agente de procesamiento de pedidos para OrderFlow, conectado a Abasta.
-Tu trabajo es analizar pedidos que llegan por email u otros canales y procesarlos en Abasta.
+const SYSTEM_PROMPT = `Eres un agente de procesamiento de pedidos para OrderFlow, conectado a Pedidoo.
+Tu trabajo es analizar pedidos que llegan por email u otros canales y procesarlos en Pedidoo.
 
 PROCESO:
 1. Analiza el contenido del pedido (puede estar en catalán, español u otro idioma)
@@ -59,13 +59,13 @@ PROCESO:
 3. Agrupa los productos por proveedor. Si son de un solo proveedor, crea un pedido. Si son de varios, crea un pedido por proveedor.
 4. Para cada grupo: usa get_supplier_products para obtener los UUIDs de producto.
 5. Comprueba duplicados con check_duplicate_order antes de crear.
-6. Crea el pedido con create_order (solo incluye los productos que existan en Abasta).
+6. Crea el pedido con create_order (solo incluye los productos que existan en Pedidoo).
 7. Envía el pedido con send_order.
 8. SIEMPRE termina respondiendo con un JSON. Si hay múltiples pedidos usa el primero creado como referencia.
 
 REGLAS:
 - Los items DEBEN usar productUuid, no el nombre.
-- Si un producto no existe en Abasta, omítelo e indica cuáles se pudieron procesar.
+- Si un producto no existe en Pedidoo, omítelo e indica cuáles se pudieron procesar.
 - Si no encuentras el proveedor con búsqueda exacta, intenta con variantes (singular/plural, sin acentos).
 - SIEMPRE responde con este JSON exacto (incluso si hay error):
   { "status": "success|error|duplicate|partial", "order_uuid": "uuid-o-null", "supplier": "Nombre", "items_count": 0, "confidence": 0.9, "message": "descripción" }

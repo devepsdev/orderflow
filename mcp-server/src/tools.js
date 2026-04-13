@@ -1,7 +1,7 @@
 import {
   getSuppliers, getProducts, getOrders,
   createOrder, sendOrder, getDashboard, request,
-} from './abasta-client.js';
+} from './pedidoo-client.js';
 
 // ─── search_suppliers ─────────────────────────────────────────────────────────
 export async function search_suppliers({ query = '', category, active_only = true } = {}) {
@@ -189,7 +189,7 @@ export const TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'search_suppliers',
-      description: 'Busca proveedores de Abasta por nombre o texto libre',
+      description: 'Busca proveedores de Pedidoo por nombre o texto libre',
       parameters: {
         type: 'object',
         properties: {
@@ -218,7 +218,7 @@ export const TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'create_order',
-      description: 'Crea un nuevo pedido en Abasta con sus líneas de detalle',
+      description: 'Crea un nuevo pedido en Pedidoo con sus líneas de detalle',
       parameters: {
         type: 'object',
         properties: {
@@ -231,7 +231,7 @@ export const TOOL_SCHEMAS = [
             items: {
               type: 'object',
               properties: {
-                productUuid: { type: 'string', description: 'UUID del producto en Abasta' },
+                productUuid: { type: 'string', description: 'UUID del producto en Pedidoo' },
                 quantity:    { type: 'number', description: 'Cantidad a pedir' },
               },
               required: ['productUuid', 'quantity'],
@@ -246,7 +246,7 @@ export const TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'send_order',
-      description: 'Envía un pedido al proveedor (Abasta manda el email automáticamente)',
+      description: 'Envía un pedido al proveedor (Pedidoo manda el email automáticamente)',
       parameters: {
         type: 'object',
         properties: {
