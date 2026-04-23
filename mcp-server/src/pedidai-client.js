@@ -1,8 +1,8 @@
 import 'dotenv/config';
 
-const BASE_URL = process.env.PEDIDOO_API_URL;
-const EMAIL    = process.env.PEDIDOO_EMAIL;
-const PASSWORD = process.env.PEDIDOO_PASSWORD;
+const BASE_URL = process.env.PEDIDAI_API_URL;
+const EMAIL    = process.env.PEDIDAI_EMAIL;
+const PASSWORD = process.env.PEDIDAI_PASSWORD;
 
 let _token = null;
 let _tokenExp = 0;
@@ -13,7 +13,7 @@ async function login() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
   });
-  if (!r.ok) throw new Error(`Pedidoo login failed: ${r.status}`);
+  if (!r.ok) throw new Error(`PedidAI login failed: ${r.status}`);
   const d = await r.json();
   _token = d.data.token;
   // JWT exp is 1h, refresh at 50min
@@ -48,7 +48,7 @@ export async function request(method, path, body) {
 
   if (!r.ok) {
     const txt = await r.text();
-    throw new Error(`Pedidoo ${method} ${path} → ${r.status}: ${txt.slice(0, 200)}`);
+    throw new Error(`PedidAI ${method} ${path} → ${r.status}: ${txt.slice(0, 200)}`);
   }
   return r.json();
 }

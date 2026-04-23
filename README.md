@@ -24,7 +24,7 @@ OrderFlow automatiza el ciclo de vida de los pedidos a proveedores:
 
 1. **Recibe** el texto de un pedido (email, webhook, formulario).
 2. **Interpreta** el contenido con DeepSeek AI (español, catalán, inglés).
-3. **Busca** el proveedor y los productos correctos en Pedidoo.
+3. **Busca** el proveedor y los productos correctos en PedidAI.
 4. **Crea y envía** el pedido automáticamente.
 5. **Analiza** el historial de consumo para sugerir pedidos óptimos.
 6. **Compara** precios entre proveedores.
@@ -47,7 +47,7 @@ OrderFlow automatiza el ciclo de vida de los pedidos a proveedores:
 └────────────────────────┬────────────────────────────────────┘
                          │ REST / JWT
 ┌────────────────────────▼────────────────────────────────────┐
-│  Pedidoo API  (PEDIDOO_API_URL)                             │
+│  PedidAI API  (PEDIDAI_API_URL)                             │
 │  Proveedores · Productos · Pedidos · Dashboard              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -57,14 +57,14 @@ OrderFlow automatiza el ciclo de vida de los pedidos a proveedores:
 | Automatización de flujos | n8n (Docker) | 5678 |
 | Servidor MCP / puente HTTP | Node.js 20 + Express 5 | 3201 |
 | IA | DeepSeek `deepseek-chat` | — |
-| Plataforma de aprovisionamiento | Pedidoo API | configurable |
+| Plataforma de aprovisionamiento | PedidAI API | configurable |
 
 ---
 
 ## Requisitos previos
 
 - [Docker](https://docs.docker.com/get-docker/) y Docker Compose
-- Acceso a la API de Pedidoo (URL, email y contraseña)
+- Acceso a la API de PedidAI (URL, email y contraseña)
 - API Key de [DeepSeek](https://platform.deepseek.com/)
 
 ---
@@ -84,12 +84,12 @@ POSTGRES_PASSWORD=tu_contraseña_segura
 ### 2. Variables del servidor MCP (`mcp-server/.env`)
 
 ```env
-# URL base de la API de Pedidoo
-PEDIDOO_API_URL=http://localhost:8085/api
+# URL base de la API de PedidAI
+PEDIDAI_API_URL=http://localhost:8085/api
 
-# Credenciales de Pedidoo
-PEDIDOO_EMAIL=usuario@ejemplo.com
-PEDIDOO_PASSWORD=tu_contraseña
+# Credenciales de PedidAI
+PEDIDAI_EMAIL=usuario@ejemplo.com
+PEDIDAI_PASSWORD=tu_contraseña
 
 # Clave de API de DeepSeek
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
@@ -132,14 +132,14 @@ docker compose down
 
 ### `GET /health`
 
-Comprueba el estado del servicio y la conexión con Pedidoo.
+Comprueba el estado del servicio y la conexión con PedidAI.
 
 **Respuesta:**
 
 ```json
 {
   "status": "ok",
-  "pedidoo": "connected"
+  "pedidai": "connected"
 }
 ```
 
@@ -264,7 +264,7 @@ orderflow/
 │   ├── src/
 │   │   ├── http-bridge.js       # API Express + bucle agéntico con DeepSeek
 │   │   ├── tools.js             # Implementación de las 9 herramientas
-│   │   └── pedidoo-client.js    # Cliente REST para la API de Pedidoo (JWT)
+│   │   └── pedidai-client.js    # Cliente REST para la API de PedidAI (JWT)
 │   ├── Dockerfile               # Imagen Node 20 Alpine
 │   ├── package.json
 │   └── .env                     # Credenciales del servidor (no incluido en git)
