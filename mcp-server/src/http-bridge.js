@@ -135,7 +135,7 @@ async function runAgent(userMessage) {
     const r = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages, tools: TOOL_SCHEMAS, tool_choice: 'auto', temperature: 0.1 }),
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages, tools: TOOL_SCHEMAS, tool_choice: 'auto', temperature: 0.1, thinking: { type: 'disabled' } }),
     });
     if (!r.ok) throw new Error(`DeepSeek HTTP ${r.status}: ${await r.text()}`);
     return r.json();
@@ -181,7 +181,7 @@ async function runAgent(userMessage) {
     const forced = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages, tools: TOOL_SCHEMAS, tool_choice: 'none', temperature: 0.1 }),
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages, tools: TOOL_SCHEMAS, tool_choice: 'none', temperature: 0.1, thinking: { type: 'disabled' } }),
     });
     if (forced.ok) {
       const fd = await forced.json();
@@ -216,8 +216,9 @@ app.post('/process-order', async (req, res) => {
 });
 
 // ─── Consumption analysis agent ───────────────────────────────────────────────
-app.post('/analyze-consumption', async (_req, res) => {
-  const userMessage = `Analiza el consumo reciente de los últimos 90 días, compara precios entre proveedores para los productos más frecuentes, y genera sugerencias de pedidos con urgencia y ahorro estimado. Usa analyze_consumption, compare_prices y suggest_orders. Devuelve un JSON con: { consumption: [...], suggestions: [...] }`;
+app.post('/analyze-consumption', async (req, res) => {
+  const { days = 180 } = req.body ?? {};
+  const userMessage = `Analiza el consumo reciente de los últimos ${days} días, compara precios entre proveedores para los productos más frecuentes, y genera sugerencias de pedidos con urgencia y ahorro estimado. Usa analyze_consumption (con days=${days}), compare_prices (con days=${days}) y suggest_orders. Devuelve un JSON con: { consumption: [...], suggestions: [...] }`;
   try {
     res.json(await runAgent(userMessage));
   } catch (err) {
