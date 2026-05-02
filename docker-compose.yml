@@ -15,11 +15,11 @@ services:
     environment:
       - DB_TYPE=sqlite
       - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
-      - N8N_HOST=deveps.ddns.net
+      - N8N_HOST=${N8N_HOST:-deveps.ddns.net}
       - N8N_PROTOCOL=https
       - N8N_PORT=5678
-      - N8N_EDITOR_BASE_URL=https://deveps.ddns.net/n8n
-      - WEBHOOK_URL=https://deveps.ddns.net/n8n/
+      - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL:-https://deveps.ddns.net/n8n}
+      - WEBHOOK_URL=${WEBHOOK_URL:-https://deveps.ddns.net/n8n/}
       - GENERIC_TIMEZONE=Europe/Madrid
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - N8N_RUNNERS_ENABLED=false
