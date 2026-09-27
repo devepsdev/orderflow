@@ -1,258 +1,226 @@
 # OrderFlow
 
-Plataforma de automatización inteligente de pedidos que combina n8n, un servidor MCP propio y la IA de DeepSeek para procesar pedidos de proveedores de forma autónoma a partir de correos electrónicos o texto libre.
+Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
+
+- **Asistente de pedidos por chat** (`mcp-server`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con DeepSeek y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
+- **n8n**: automatizaciones internas del equipo de PedidAI (alertas por email de registros nuevos y resumen diario).
 
 ---
 
 ## Tabla de contenidos
 
-- [Descripción general](#descripción-general)
 - [Arquitectura](#arquitectura)
-- [Requisitos previos](#requisitos-previos)
+- [Asistente de pedidos](#asistente-de-pedidos)
+- [API del asistente](#api-del-asistente)
+- [Flujos de n8n](#flujos-de-n8n)
 - [Configuración](#configuración)
 - [Puesta en marcha](#puesta-en-marcha)
-- [API Reference](#api-reference)
-- [Herramientas disponibles](#herramientas-disponibles)
-- [Flujos de trabajo n8n](#flujos-de-trabajo-n8n)
+- [Despliegue en producción](#despliegue-en-producción)
 - [Estructura del proyecto](#estructura-del-proyecto)
-
----
-
-## Descripción general
-
-OrderFlow automatiza el ciclo de vida de los pedidos a proveedores:
-
-1. **Recibe** el texto de un pedido (email, webhook, formulario).
-2. **Interpreta** el contenido con DeepSeek AI (español, catalán, inglés).
-3. **Busca** el proveedor y los productos correctos en PedidAI.
-4. **Crea y envía** el pedido automáticamente.
-5. **Analiza** el historial de consumo para sugerir pedidos óptimos.
-6. **Compara** precios entre proveedores.
-7. **Detecta duplicados** dentro de una ventana de tiempo configurable.
 
 ---
 
 ## Arquitectura
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│  n8n (puerto 5678)                                          │
-│  Webhooks · Flujos de trabajo · Interfaz de usuario         │
-└────────────────────────┬────────────────────────────────────┘
-                         │ HTTP
-┌────────────────────────▼────────────────────────────────────┐
-│  MCP HTTP Bridge  (puerto 3201)                             │
-│  Express.js · Bucle agéntico con DeepSeek                   │
-│  9 herramientas de gestión de pedidos y proveedores         │
-└────────────────────────┬────────────────────────────────────┘
-                         │ REST / JWT
-┌────────────────────────▼────────────────────────────────────┐
-│  PedidAI API  (PEDIDAI_API_URL)                             │
-│  Proveedores · Productos · Pedidos · Dashboard              │
-└─────────────────────────────────────────────────────────────┘
+Navegador (app de PedidAI)
+        │  https://pedidai.es/ai/…  (con el token JWT del usuario)
+        ▼
+      nginx ───────────────► mcp-bridge  127.0.0.1:3201 ──► DeepSeek
+                                  │
+                                  │ REST con el mismo token
+                                  ▼
+                         API de PedidAI  127.0.0.1:8085
+                                  ▲            │
+             GET /api/internal/…  │            │ webhook tras cada registro
+                                  │            ▼
+                              n8n  127.0.0.1:5678 ──► SMTP (Gmail) ──► email al equipo
 ```
 
-| Componente | Tecnología | Puerto |
-| --- | --- | --- |
-| Automatización de flujos | n8n (Docker) | 5678 |
-| Servidor MCP / puente HTTP | Node.js 20 + Express 5 | 3201 |
-| IA | DeepSeek `deepseek-chat` | — |
-| Plataforma de aprovisionamiento | PedidAI API | configurable |
+| Servicio | Tecnología | Puerto | Red |
+| --- | --- | --- | --- |
+| `mcp-bridge` | Node.js 20 + Express 5 | 3201 | `host`, escucha solo en `127.0.0.1` |
+| `n8n` | n8n 2.x (SQLite) | 5678 | `host`, escucha solo en `127.0.0.1` |
+
+Ninguno de los dos puertos se expone a Internet: nginx publica el asistente en `/ai/` y el editor de n8n en `/n8n/` (los webhooks de n8n quedan bloqueados desde fuera).
+
+> **Nota sobre el nombre `mcp-server`:** el asistente sigue la idea de MCP (una IA con una lista de herramientas que actúan sobre una aplicación), pero es un servidor Express que usa el *function calling* de DeepSeek; no implementa el protocolo MCP ni usa su SDK.
 
 ---
 
-## Requisitos previos
+## Asistente de pedidos
 
-- [Docker](https://docs.docker.com/get-docker/) y Docker Compose
-- Acceso a la API de PedidAI (URL, email y contraseña)
-- API Key de [DeepSeek](https://platform.deepseek.com/)
+Principios de diseño:
+
+- **Actúa con la sesión del usuario.** Cada petición trae el token JWT de quien usa la app; el asistente lo valida contra `GET /api/users/me` y hace todas las llamadas a la API con ese mismo token. No existe ninguna cuenta fija: la IA solo ve y crea datos de la empresa del usuario, con sus mismos permisos.
+- **Nunca envía pedidos.** Solo crea pedidos en estado `PENDING`; el usuario los revisa y los envía desde la app.
+- **Los pedidos devueltos son los reales.** La respuesta incluye los pedidos tal como los ha creado la API, no el texto que genera la IA.
+- **Bilingüe.** Responde en castellano o catalán según el idioma del usuario (`Accept-Language` y su perfil).
+- **Límites de uso** por usuario para controlar el coste de la IA: 30 mensajes por hora y 150 por día en el chat; 60 peticiones de sugerencias por hora.
+
+Herramientas que puede usar la IA (`src/tools.js`):
+
+| Herramienta | Qué hace |
+| --- | --- |
+| `compare_prices` | Proveedores que tienen un producto y su precio vigente según los albaranes, del más barato al más caro |
+| `search_suppliers` | Busca proveedores del usuario por nombre |
+| `get_supplier_products` | Productos de un proveedor con precio y unidad |
+| `check_duplicate_order` | Indica si ya hay un pedido pendiente reciente a ese proveedor |
+| `create_order` | Crea un pedido **pendiente** a un proveedor |
+
+Las sugerencias de reposición (`suggest_orders`) no usan IA: combinan el análisis de consumo de la API con la comparativa de precios.
+
+---
+
+## API del asistente
+
+Todas las rutas, salvo `/health`, exigen `Authorization: Bearer <token de PedidAI>`. En producción se accede como `https://pedidai.es/ai/<ruta>`.
+
+### `GET /health`
+
+```json
+{ "status": "ok" }
+```
+
+### `POST /process-order`
+
+Interpreta un mensaje del chat y crea los pedidos pendientes.
+
+```json
+{ "text": "10 kg de tomates y 5 garrafas de agua" }
+```
+
+```json
+{
+  "status": "success",
+  "message": "He preparado el pedido con Frutas Martínez, el más barato.",
+  "unmatched": [],
+  "orders": [
+    {
+      "uuid": "…",
+      "name": "Verdura y agua",
+      "status": "PENDING",
+      "supplier_name": "Frutas Martínez",
+      "total": 20.4,
+      "items": [{ "product": "Tomate pera", "quantity": 10, "unit_price": 1.55, "subtotal": 15.5 }]
+    }
+  ]
+}
+```
+
+Errores: `400` (mensaje vacío), `401` (token ausente o no válido), `429` (límite de uso), `502` (IA no disponible).
+
+### `POST /suggest-orders`
+
+Sugerencias de reposición según el consumo de los últimos 180 días (alias: `/suggestions`).
+
+```json
+{ "min_order_count": 2 }
+```
+
+Devuelve una lista ordenada por urgencia (`high`, `medium`, `low`) con producto, proveedor más barato, cantidad habitual, precio y porcentaje de ahorro estimado.
+
+---
+
+## Flujos de n8n
+
+Los flujos están en `n8n-workflows/`. Se importan con la cuenta de envío de la plataforma como remitente y destinatario (sustituyendo `__ALERT_EMAIL__`):
+
+| Archivo | Disparador | Qué hace |
+| --- | --- | --- |
+| `pedidai-nuevo-registro.json` | Webhook `POST /webhook/pedidai-nuevo-registro`, llamado por la API de PedidAI tras cada registro | Envía por email la ficha del negocio: nombre, ciudad, contacto, email, teléfono, idioma y fin de la prueba |
+| `pedidai-resumen-diario.json` | Cada día a las 8:00 (Europe/Madrid) | Pide `GET http://127.0.0.1:8085/api/internal/daily-summary` y envía registros nuevos, pruebas que acaban en ≤ 3 días, pruebas vencidas, datos que se borrarán en < 7 días y actividad del día |
+| `process-order.json` | — | **Obsoleto.** Ejemplo inicial que llamaba a herramientas en `127.0.0.1:3200/tools`, que ya no existen. No se importa. |
+
+Detalles:
+
+- Los nombres introducidos por los clientes se escapan antes de montar el HTML del email.
+- Las ejecuciones correctas no se guardan (`saveDataSuccessExecution: none`) para no acumular datos personales en n8n; las fallidas sí, para poder revisarlas.
+- El endpoint interno de la API solo responde a peticiones locales que no pasan por nginx, y nginx además bloquea `/api/internal/`.
+
+Importación en el servidor:
+
+```bash
+M=<cuenta de envío>   # la de MAIL_USER_PEDIDAI de la API
+for w in pedidai-nuevo-registro pedidai-resumen-diario; do
+  sed "s/__ALERT_EMAIL__/$M/g" n8n-workflows/$w.json > /tmp/$w.json
+  sudo docker cp /tmp/$w.json orderflow-n8n-1:/tmp/$w.json
+  sudo docker exec -u node orderflow-n8n-1 n8n import:workflow --input=/tmp/$w.json
+done
+```
+
+Después, en el editor de n8n: crear una credencial **SMTP** (Gmail: `smtp.gmail.com`, puerto 465, SSL/TLS, contraseña de aplicación), asignarla al nodo *Enviar email* de cada flujo y pulsar **Publish**.
+
+En la API de PedidAI, el aviso de registro se activa con la variable `N8N_NEW_COMPANY_WEBHOOK=http://127.0.0.1:5678/webhook/pedidai-nuevo-registro` (vacía = desactivado).
 
 ---
 
 ## Configuración
 
-### 1. Variables de entorno raíz (`.env`)
+### `.env` (raíz, para `docker-compose.yml`)
 
-Copia el ejemplo y rellena los valores:
-
-```env
-POSTGRES_DB=orderflow
-POSTGRES_USER=orderflow
-POSTGRES_PASSWORD=tu_contraseña_segura
-```
-
-### 2. Variables del servidor MCP (`mcp-server/.env`)
+Ver `.env.example`. Solo contiene URLs públicas de n8n:
 
 ```env
-# URL base de la API de PedidAI
-PEDIDAI_API_URL=http://localhost:8085/api
-
-# Credenciales de PedidAI
-PEDIDAI_EMAIL=usuario@ejemplo.com
-PEDIDAI_PASSWORD=tu_contraseña
-
-# Clave de API de DeepSeek
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
+N8N_HOST=pedidai.es
+N8N_EDITOR_BASE_URL=https://pedidai.es/n8n/
+WEBHOOK_URL=https://pedidai.es/n8n/
 ```
 
-> Las credenciales se autentican automáticamente con renovación de token JWT cada hora.
+### `mcp-server/.env`
+
+Ver `mcp-server/.env.example`:
+
+```env
+PEDIDAI_API_URL=http://localhost:8085/api   # API vista desde el servidor, sin barra final
+DEEPSEEK_API_KEY=                           # clave de DeepSeek
+# DEEPSEEK_MODEL=deepseek-v4-flash
+# HOST=127.0.0.1
+# PORT=3201
+```
+
+Ninguno de los dos `.env` se versiona.
 
 ---
 
 ## Puesta en marcha
 
+En local (sin Docker), con la API de PedidAI en marcha:
+
 ```bash
-# Levantar todos los servicios
-docker compose up -d
+cd mcp-server
+cp .env.example .env      # y rellena PEDIDAI_API_URL y DEEPSEEK_API_KEY
+npm install
+npm start                 # http://127.0.0.1:3201/health
+```
 
-# Verificar que están corriendo
+La app de Angular redirige `/ai` a `127.0.0.1:3201` mediante `proxy.conf.json`.
+
+Con Docker:
+
+```bash
+docker compose up -d                  # asistente y n8n
 docker compose ps
-
-# Ver logs del servidor MCP
 docker compose logs -f mcp-bridge
-
-# Ver logs de n8n
 docker compose logs -f n8n
 ```
 
-| Servicio | URL |
-| --- | --- |
-| n8n (interfaz) | <http://localhost:5678> |
-| MCP Bridge (health) | <http://localhost:3201/health> |
+---
 
-Para detener los servicios:
+## Despliegue en producción
+
+En el VPS el repositorio está en `/opt/apps/orderflow` (rama local `master`, sin seguimiento):
 
 ```bash
-docker compose down
+cd /opt/apps/orderflow
+git fetch && git merge --ff-only origin/main
+sudo docker compose up -d --build mcp-bridge   # si cambia el asistente
+sudo docker compose up -d n8n                  # si cambia la configuración de n8n
+curl -s http://127.0.0.1:3201/health           # {"status":"ok"}
+curl -s http://127.0.0.1:5678/healthz          # {"status":"ok"}
 ```
 
----
-
-## API Reference
-
-### `GET /health`
-
-Comprueba el estado del servicio y la conexión con PedidAI.
-
-**Respuesta:**
-
-```json
-{
-  "status": "ok",
-  "pedidai": "connected"
-}
-```
-
----
-
-### `GET /tools`
-
-Lista todos los esquemas de herramientas disponibles para integración con IA.
-
----
-
-### `POST /tools/:toolName`
-
-Ejecuta una herramienta específica directamente.
-
-**Ejemplo:**
-
-```bash
-curl -X POST http://localhost:3201/tools/search_suppliers \
-  -H "Content-Type: application/json" \
-  -d '{"query": "frutas"}'
-```
-
----
-
-### `POST /process-order`
-
-Procesa un pedido en texto libre usando el bucle agéntico de DeepSeek.
-
-**Body:**
-
-```json
-{
-  "source": "email",
-  "from": "proveedor@ejemplo.com",
-  "subject": "Pedido semanal",
-  "body": "Necesito 10 kg de tomates y 5 kg de pimientos de Verduras García",
-  "source_ref": "email-id-123"
-}
-```
-
-**Respuesta:**
-
-```json
-{
-  "success": true,
-  "result": "Pedido creado y enviado correctamente. Order #4521 — Verduras García.",
-  "iterations": 4
-}
-```
-
----
-
-### `POST /analyze-consumption`
-
-Lanza un análisis de consumo de los últimos 90 días con IA.
-
-**Respuesta:**
-
-```json
-{
-  "success": true,
-  "result": "Análisis completado. Se han identificado 8 productos con consumo recurrente..."
-}
-```
-
----
-
-### `POST /suggest-orders`
-
-Genera sugerencias de pedidos basadas en el historial de consumo.
-
-**Body:**
-
-```json
-{
-  "min_order_count": 2
-}
-```
-
----
-
-## Herramientas disponibles
-
-El servidor expone 9 herramientas que la IA puede invocar de forma autónoma:
-
-| Herramienta | Descripción |
-| --- | --- |
-| `search_suppliers` | Busca proveedores por nombre o categoría |
-| `get_supplier_products` | Lista productos de un proveedor con precios |
-| `create_order` | Crea un pedido con sus líneas de producto |
-| `send_order` | Envía un pedido al proveedor |
-| `check_duplicate_order` | Detecta pedidos duplicados en una ventana temporal |
-| `get_order_summary` | Obtiene métricas del dashboard (gasto, pedidos pendientes…) |
-| `analyze_consumption` | Analiza patrones de consumo en los últimos 90-180 días |
-| `compare_prices` | Compara precios de un producto entre proveedores |
-| `suggest_orders` | Sugiere pedidos óptimos según el histórico |
-
----
-
-## Flujos de trabajo n8n
-
-El directorio `n8n-workflows/` contiene los flujos exportados:
-
-| Archivo | Descripción |
-| --- | --- |
-| `process-order.json` | Recibe un webhook con un email, llama a `/process-order` y devuelve el resultado |
-
-Para importarlos en n8n:
-
-1. Abre <http://localhost:5678>
-2. Ve a **Workflows → Import from file**
-3. Selecciona el archivo `.json` correspondiente
+Los datos de n8n (flujos, credenciales cifradas e historial) viven en `data/n8n/`; conviene copiarlos antes de actualizar.
 
 ---
 
@@ -260,21 +228,21 @@ Para importarlos en n8n:
 
 ```text
 orderflow/
-├── mcp-server/                  # Servidor backend principal
+├── mcp-server/
 │   ├── src/
-│   │   ├── http-bridge.js       # API Express + bucle agéntico con DeepSeek
-│   │   ├── tools.js             # Implementación de las 9 herramientas
-│   │   └── pedidai-client.js    # Cliente REST para la API de PedidAI (JWT)
-│   ├── Dockerfile               # Imagen Node 20 Alpine
+│   │   ├── http-bridge.js       # Express: autenticación, límites de uso, agente con DeepSeek, rutas
+│   │   ├── tools.js             # Herramientas de la IA y sugerencias de reposición
+│   │   └── pedidai-client.js    # Cliente REST de la API de PedidAI (token e idioma del usuario)
+│   ├── Dockerfile               # Node 20 Alpine
 │   ├── package.json
-│   └── .env                     # Credenciales del servidor (no incluido en git)
+│   └── .env.example
 ├── n8n-workflows/
-│   └── process-order.json       # Flujo de procesamiento de pedidos por email
-├── data/
-│   └── n8n/                     # Volumen persistente de n8n (SQLite + nodos)
-├── docker-compose.yml           # Orquestación de servicios
-├── .env                         # Variables de entorno raíz (no incluido en git)
-└── .gitignore
+│   ├── pedidai-nuevo-registro.json
+│   ├── pedidai-resumen-diario.json
+│   └── process-order.json       # obsoleto
+├── data/n8n/                    # volumen de n8n (no versionado)
+├── docker-compose.yml
+└── .env.example
 ```
 
 ---
