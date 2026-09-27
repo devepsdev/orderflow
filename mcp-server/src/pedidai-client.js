@@ -1,105 +1,73 @@
 import 'dotenv/config';
 
 const BASE_URL = process.env.PEDIDAI_API_URL;
-const EMAIL    = process.env.PEDIDAI_EMAIL;
-const PASSWORD = process.env.PEDIDAI_PASSWORD;
 
-let _token = null;
-let _tokenExp = 0;
+/**
+ * Cliente de la API de PedidAI que actúa en nombre del usuario que hace la petición:
+ * reutiliza su token, así que solo puede ver y tocar los datos de su propia empresa.
+ */
+export function createClient(token, lang = 'es') {
+  async function request(method, path, body) {
+    const opts = {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Accept-Language': lang,
+        'Content-Type': 'application/json',
+      },
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
 
-async function login() {
-  const r = await fetch(`${BASE_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
-  });
-  if (!r.ok) throw new Error(`PedidAI login failed: ${r.status}`);
-  const d = await r.json();
-  _token = d.data.token;
-  // JWT exp is 1h, refresh at 50min
-  _tokenExp = Date.now() + 50 * 60 * 1000;
-  return _token;
-}
+    const r = await fetch(`${BASE_URL}${path}`, opts);
+    if (!r.ok) {
+      let message = `PedidAI ${method} ${path} → ${r.status}`;
+      try { message = (await r.json()).message || message; } catch { /* sin cuerpo JSON */ }
+      const err = new Error(message);
+      err.status = r.status;
+      throw err;
+    }
+    return r.json();
+  }
 
-async function getToken() {
-  if (!_token || Date.now() >= _tokenExp) await login();
-  return _token;
-}
+  return {
+    request,
 
-export async function request(method, path, body) {
-  const token = await getToken();
-  const opts = {
-    method,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
+    async getMe() {
+      return (await request('GET', '/users/me')).data;
+    },
+
+    async getSuppliers({ searchText = '', page = 0, size = 100 } = {}) {
+      const path = searchText
+        ? `/suppliers/search?searchText=${encodeURIComponent(searchText)}&page=${page}&size=${size}`
+        : `/suppliers?page=${page}&size=${size}`;
+      return (await request('GET', path)).data.content;
+    },
+
+    async getProducts({ supplierUuid, name, page = 0, size = 200 } = {}) {
+      const params = new URLSearchParams({ page, size });
+      if (supplierUuid) params.set('supplierUuid', supplierUuid);
+      if (name) params.set('name', name);
+      return (await request('GET', `/products/filter?${params}`)).data.content;
+    },
+
+    async getOrders({ supplierUuid, status, createdAfter, page = 0, size = 100 } = {}) {
+      const params = new URLSearchParams({ page, size });
+      if (supplierUuid) params.set('supplierUuid', supplierUuid);
+      if (status) params.set('status', status);
+      if (createdAfter) params.set('createdAtFrom', createdAfter);
+      return (await request('GET', `/orders/filter?${params}`)).data.content;
+    },
+
+    async createOrder({ supplierUuid, name, items, notes = '' }) {
+      return (await request('POST', '/orders/create', { supplierUuid, name, items, notes })).data;
+    },
+
+    async comparePrices(productName, days = 365) {
+      return (await request('GET', `/products/compare-prices?productName=${encodeURIComponent(productName)}&days=${days}`)).data;
+    },
+
+    async consumptionAnalysis(days = 180) {
+      return (await request('GET', `/orders/consumption-analysis?days=${days}`)).data;
     },
   };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-
-  let r = await fetch(`${BASE_URL}${path}`, opts);
-
-  if (r.status === 401) {
-    // Re-login and retry once
-    await login();
-    opts.headers['Authorization'] = `Bearer ${_token}`;
-    r = await fetch(`${BASE_URL}${path}`, opts);
-  }
-
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`PedidAI ${method} ${path} → ${r.status}: ${txt.slice(0, 200)}`);
-  }
-  return r.json();
-}
-
-export async function healthCheck() {
-  const r = await request('GET', '/reports/dashboard');
-  return r.data;
-}
-
-export async function getSuppliers({ searchText = '', page = 0, size = 100 } = {}) {
-  if (searchText) {
-    const r = await request('GET', `/suppliers/search?searchText=${encodeURIComponent(searchText)}&page=${page}&size=${size}`);
-    return r.data.content;
-  }
-  const r = await request('GET', `/suppliers?page=${page}&size=${size}`);
-  return r.data.content;
-}
-
-export async function getProducts({ supplierUuid, name, page = 0, size = 100 } = {}) {
-  const params = new URLSearchParams({ page, size });
-  if (supplierUuid) params.set('supplierUuid', supplierUuid);
-  if (name) params.set('name', name);
-  const r = await request('GET', `/products/filter?${params}`);
-  return r.data.content;
-}
-
-export async function getAllProducts({ page = 0, size = 200 } = {}) {
-  const r = await request('GET', `/products?page=${page}&size=${size}`);
-  return r.data.content;
-}
-
-export async function getOrders({ supplierUuid, status, createdAfter, page = 0, size = 100 } = {}) {
-  const params = new URLSearchParams({ page, size });
-  if (supplierUuid) params.set('supplierUuid', supplierUuid);
-  if (status) params.set('status', status);
-  if (createdAfter) params.set('createdAfter', createdAfter);
-  const r = await request('GET', `/orders/filter?${params}`);
-  return r.data.content;
-}
-
-export async function createOrder({ supplierUuid, name, items, notes = '' }) {
-  const r = await request('POST', '/orders/create', { supplierUuid, name, items, notes });
-  return r.data;
-}
-
-export async function sendOrder(uuid) {
-  const r = await request('POST', `/orders/${uuid}/send`);
-  return r.data;
-}
-
-export async function getDashboard() {
-  const r = await request('GET', '/reports/dashboard');
-  return r.data;
 }

@@ -1,215 +1,160 @@
-import {
-  getSuppliers, getProducts, getOrders,
-  createOrder, sendOrder, getDashboard, request,
-} from './pedidai-client.js';
+// Herramientas del agente de pedidos. Todas reciben el cliente de PedidAI del usuario (su token),
+// así que solo operan sobre los datos de su empresa. El agente NO puede enviar pedidos:
+// los deja pendientes y el usuario los envía con un clic desde la aplicación.
 
-// ─── search_suppliers ─────────────────────────────────────────────────────────
-export async function search_suppliers({ query = '', category, active_only = true } = {}) {
-  const suppliers = await getSuppliers({ searchText: query });
-  let results = active_only ? suppliers.filter(s => s.isActive) : suppliers;
-  if (category) results = results.filter(s => s.notes?.toLowerCase().includes(category.toLowerCase()));
-  return results.map(s => ({
-    uuid: s.uuid,
-    name: s.name,
-    contactName: s.contactName,
-    email: s.email,
-    phone: s.phone,
+/** Fecha en el formato que espera el filtro de pedidos de PedidAI (yyyy-MM-dd HH:mm:ss). */
+function pedidaiDate(date) {
+  const p = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+}
+
+export async function search_suppliers(client, { query = '' } = {}) {
+  const suppliers = await client.getSuppliers({ searchText: query });
+  return suppliers.filter(s => s.isActive).map(s => ({ uuid: s.uuid, name: s.name, has_email: !!s.email }));
+}
+
+export async function get_supplier_products(client, { supplier_uuid } = {}) {
+  const products = await client.getProducts({ supplierUuid: supplier_uuid });
+  return products.filter(p => p.isActive).map(p => ({
+    uuid: p.uuid, name: p.name, generic_name: p.canonicalName, price: p.price, unit: p.unit,
   }));
 }
 
-// ─── get_supplier_products ────────────────────────────────────────────────────
-export async function get_supplier_products({ supplier_uuid, active_only = true } = {}) {
-  const products = await getProducts({ supplierUuid: supplier_uuid });
-  let results = active_only ? products.filter(p => p.isActive) : products;
-  return results.map(p => ({
-    uuid: p.uuid,
-    name: p.name,
-    price: p.price,
-    unit: p.unit,
-    category: p.category,
-    description: p.description,
+/** Precio vigente del producto en cada proveedor (según los últimos albaranes), del más barato al más caro. */
+export async function compare_prices(client, { product_name } = {}) {
+  const groups = await client.comparePrices(product_name);
+  return groups.slice(0, 5).map(g => ({
+    product: g.name,
+    unit: g.unit,
+    offers: g.offers.map(o => ({
+      supplier: o.supplierName,
+      supplier_uuid: o.supplierUuid,
+      supplier_has_email: o.supplierHasEmail,
+      product_uuid: o.productUuid,
+      product_name: o.productName,
+      price: o.latestPrice,
+      price_date: o.latestDate,
+      cheapest: o.cheapest,
+    })),
   }));
 }
 
-// ─── create_order ─────────────────────────────────────────────────────────────
-export async function create_order({ supplier_uuid, name, items, notes = '' } = {}) {
-  // items: [{productUuid, productName, quantity}]
-  const orderItems = items.map(i => ({
-    productUuid: i.productUuid,
-    quantity: i.quantity,
-  }));
-  const order = await createOrder({
+export async function check_duplicate_order(client, { supplier_uuid, hours_window = 24 } = {}) {
+  const since = pedidaiDate(new Date(Date.now() - hours_window * 3600 * 1000));
+  const orders = await client.getOrders({ supplierUuid: supplier_uuid, createdAfter: since, status: 'PENDING' });
+  return {
+    has_pending_order: orders.length > 0,
+    pending_orders: orders.map(o => ({ uuid: o.uuid, name: o.name, total: o.totalAmount, created_at: o.createdAt })),
+  };
+}
+
+export async function create_order(client, { supplier_uuid, name, items, notes = '' } = {}) {
+  const order = await client.createOrder({
     supplierUuid: supplier_uuid,
-    name: name || 'Pedido automático',
-    items: orderItems,
+    name: name || 'Pedido',
+    items: (items || []).map(i => ({ productUuid: i.productUuid, quantity: i.quantity })),
     notes,
   });
   return {
     uuid: order.uuid,
     name: order.name,
     status: order.status,
-    totalAmount: order.totalAmount,
-    items: order.items,
+    supplier_name: order.supplierName,
+    total: order.totalAmount,
+    items: order.items.map(i => ({ product: i.productName, quantity: i.quantity, unit_price: i.unitPrice, subtotal: i.subtotal })),
   };
 }
 
-// ─── send_order ───────────────────────────────────────────────────────────────
-export async function send_order({ order_uuid } = {}) {
-  const result = await sendOrder(order_uuid);
-  return { success: true, order_uuid, result };
-}
+/**
+ * Sugerencias de reposición (sin IA): productos pedidos con frecuencia, con el proveedor
+ * más barato según el historial de precios.
+ */
+export async function suggest_orders(client, { min_order_count = 2 } = {}) {
+  const consumption = await client.consumptionAnalysis(180);
+  const candidates = (consumption.topProducts || []).filter(c => c.orderCount >= min_order_count).slice(0, 15);
 
-// ─── check_duplicate_order ────────────────────────────────────────────────────
-export async function check_duplicate_order({ supplier_uuid, source_ref, hours_window = 24 } = {}) {
-  const since = new Date(Date.now() - hours_window * 3600 * 1000).toISOString();
-  const orders = await getOrders({ supplierUuid: supplier_uuid, createdAfter: since });
-  const active = orders.filter(o => !['CANCELLED', 'ERROR'].includes(o.status));
-
-  // Check by source_ref in order name if provided
-  const matching = source_ref
-    ? active.filter(o => o.name?.includes(source_ref))
-    : active;
-
-  return {
-    is_duplicate: matching.length > 0,
-    existing_orders: matching.map(o => ({
-      uuid: o.uuid,
-      name: o.name,
-      status: o.status,
-      totalAmount: o.totalAmount,
-      createdAt: o.createdAt,
-    })),
-  };
-}
-
-// ─── get_order_summary ────────────────────────────────────────────────────────
-export async function get_order_summary({ days = 7, status } = {}) {
-  const since = new Date(Date.now() - days * 86400 * 1000).toISOString();
-  const orders = await getOrders({ status, createdAfter: since, size: 500 });
-  const dashboard = await getDashboard();
-
-  const byStatus = {};
-  const bySupplier = {};
-  let totalAmount = 0;
-
-  for (const o of orders) {
-    byStatus[o.status] = (byStatus[o.status] || 0) + 1;
-    bySupplier[o.supplierUuid] = (bySupplier[o.supplierUuid] || 0) + 1;
-    totalAmount += o.totalAmount || 0;
-  }
-
-  return {
-    total_orders: orders.length,
-    total_amount: Math.round(totalAmount * 100) / 100,
-    by_status: byStatus,
-    by_supplier_count: Object.keys(bySupplier).length,
-    dashboard: {
-      totalOrders: dashboard.totalComandes,
-      totalExpense: dashboard.despesaComandes,
-      pendingOrders: dashboard.comandesPendents,
-    },
-  };
-}
-
-// ─── analyze_consumption ──────────────────────────────────────────────────────
-export async function analyze_consumption({ days = 90 } = {}) {
-  const r = await request('GET', `/orders/consumption-analysis?days=${days}`);
-  return r.data;
-}
-
-// ─── compare_prices ───────────────────────────────────────────────────────────
-export async function compare_prices({ product_name, days = 90 } = {}) {
-  const r = await request('GET', `/products/compare-prices?productName=${encodeURIComponent(product_name)}&days=${days}`);
-  return r.data;
-}
-
-// ─── suggest_orders ───────────────────────────────────────────────────────────
-export async function suggest_orders({ min_order_count = 2 } = {}) {
-  const consumption = await analyze_consumption({ days: 180 });
-  const candidates = (consumption.topProducts || []).filter(
-    c => c.orderCount >= min_order_count
-  );
-
-  // Pedidos activos de las últimas 48h: descuenta del déficit de urgencia
-  const cutoff48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  const recentlyOrderedProducts = new Set();
+  const since = pedidaiDate(new Date(Date.now() - 48 * 3600 * 1000));
+  const recentlyOrdered = new Set();
   try {
-    const recentOrders = await getOrders({ createdAfter: cutoff48h, size: 200 });
-    for (const o of recentOrders) {
-      if (['CANCELLED', 'DELETED'].includes(o.status)) continue;
-      for (const item of (o.items || [])) {
-        if (item.productName) recentlyOrderedProducts.add(item.productName.toLowerCase());
-      }
+    for (const o of await client.getOrders({ createdAfter: since, size: 200 })) {
+      for (const item of o.items || []) if (item.productName) recentlyOrdered.add(item.productName.toLowerCase());
     }
-  } catch (_) {}
+  } catch { /* sin pedidos recientes */ }
 
   const suggestions = [];
   for (const c of candidates) {
-    let alternatives = [];
+    let cheapest = null;
     try {
-      alternatives = await compare_prices({ product_name: c.productName });
-    } catch (_) {}
+      const groups = await client.comparePrices(c.productName);
+      cheapest = groups[0]?.offers?.[0] ?? null;
+    } catch { /* sin comparativa */ }
 
-    const cheapest = alternatives[0] || null;
-    const currentPrice = c.currentPrice ?? (cheapest?.currentPrice ?? null);
-
-    const isRecentlyOrdered = recentlyOrderedProducts.has(c.productName.toLowerCase());
-
-    let urgency = 'low';
-    if (!isRecentlyOrdered) {
-      if (c.orderCount >= 5) urgency = 'high';
-      else if (c.orderCount >= 3) urgency = 'medium';
-    }
-
-    const savings = (cheapest && currentPrice && cheapest.currentPrice < currentPrice)
-      ? Math.round(((currentPrice - cheapest.currentPrice) / currentPrice) * 100)
-      : 0;
+    const current = c.currentPrice ?? cheapest?.latestPrice ?? null;
+    const isRecent = recentlyOrdered.has(c.productName.toLowerCase());
+    const urgency = isRecent ? 'low' : c.orderCount >= 5 ? 'high' : c.orderCount >= 3 ? 'medium' : 'low';
+    const savings = cheapest && current && cheapest.latestPrice < current
+      ? Math.round(((current - cheapest.latestPrice) / current) * 100) : 0;
 
     suggestions.push({
       urgency,
-      ...(isRecentlyOrdered && { recentlyOrdered: true }),
+      ...(isRecent && { recentlyOrdered: true }),
       product: c.productName,
       product_uuid: cheapest?.productUuid || c.productUuid,
-      supplier: cheapest?.supplierName || null,
+      supplier: cheapest?.supplierName || c.supplierName || null,
       supplier_uuid: cheapest?.supplierUuid || null,
       quantity: c.avgQuantityPerOrder,
       unit: cheapest?.unit || c.unit,
       estimated_savings_percent: savings,
-      price: cheapest?.currentPrice || currentPrice,
+      price: cheapest?.latestPrice || current,
     });
   }
-
-  const order = { high: 0, medium: 1, low: 2 };
-  return suggestions.sort((a, b) => order[a.urgency] - order[b.urgency]);
+  const rank = { high: 0, medium: 1, low: 2 };
+  return suggestions.sort((a, b) => rank[a.urgency] - rank[b.urgency]);
 }
 
-// ─── TOOL_SCHEMAS ─────────────────────────────────────────────────────────────
-export const TOOL_SCHEMAS = [
+export const CHAT_TOOLS = { search_suppliers, get_supplier_products, compare_prices, check_duplicate_order, create_order };
+
+export const CHAT_TOOL_SCHEMAS = [
   {
     type: 'function',
     function: {
-      name: 'search_suppliers',
-      description: 'Busca proveedores de PedidAI por nombre o texto libre',
+      name: 'compare_prices',
+      description: 'Devuelve los proveedores del usuario que tienen un producto y su precio vigente según los últimos albaranes, del más barato al más caro. Busca por nombre genérico en castellano y singular (ej: "tomate", "agua mineral").',
       parameters: {
         type: 'object',
-        properties: {
-          query:       { type: 'string',  description: 'Texto a buscar en el nombre del proveedor' },
-          active_only: { type: 'boolean', description: 'Solo proveedores activos', default: true },
-        },
+        properties: { product_name: { type: 'string', description: 'Nombre genérico del producto en castellano' } },
+        required: ['product_name'],
       },
     },
   },
   {
     type: 'function',
     function: {
+      name: 'search_suppliers',
+      description: 'Busca proveedores del usuario por nombre. Úsalo solo si el usuario menciona un proveedor concreto.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_supplier_products',
-      description: 'Lista los productos activos de un proveedor con precio y unidad',
+      description: 'Lista los productos de un proveedor con su precio y unidad.',
       parameters: {
         type: 'object',
-        properties: {
-          supplier_uuid: { type: 'string',  description: 'UUID del proveedor' },
-          active_only:   { type: 'boolean', description: 'Solo productos activos', default: true },
-        },
+        properties: { supplier_uuid: { type: 'string' } },
+        required: ['supplier_uuid'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_duplicate_order',
+      description: 'Indica si ya hay un pedido PENDIENTE reciente a ese proveedor.',
+      parameters: {
+        type: 'object',
+        properties: { supplier_uuid: { type: 'string' }, hours_window: { type: 'number', default: 24 } },
         required: ['supplier_uuid'],
       },
     },
@@ -218,111 +163,26 @@ export const TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'create_order',
-      description: 'Crea un nuevo pedido en PedidAI con sus líneas de detalle',
+      description: 'Crea un pedido PENDIENTE (no se envía) a un proveedor. Todos los productos deben ser de ese proveedor.',
       parameters: {
         type: 'object',
         properties: {
-          supplier_uuid: { type: 'string', description: 'UUID del proveedor' },
-          name:          { type: 'string', description: 'Nombre del pedido (ej: "Pedido semanal frutas")' },
-          notes:         { type: 'string', description: 'Notas opcionales para el proveedor' },
+          supplier_uuid: { type: 'string' },
+          name: { type: 'string', description: 'Nombre corto del pedido, en el idioma del usuario' },
+          notes: { type: 'string', description: 'Notas para el proveedor, solo si el usuario las pide' },
           items: {
             type: 'array',
-            description: 'Líneas del pedido',
             items: {
               type: 'object',
               properties: {
-                productUuid: { type: 'string', description: 'UUID del producto en PedidAI' },
-                quantity:    { type: 'number', description: 'Cantidad a pedir' },
+                productUuid: { type: 'string' },
+                quantity: { type: 'number' },
               },
               required: ['productUuid', 'quantity'],
             },
           },
         },
         required: ['supplier_uuid', 'items'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'send_order',
-      description: 'Envía un pedido al proveedor (PedidAI manda el email automáticamente)',
-      parameters: {
-        type: 'object',
-        properties: {
-          order_uuid: { type: 'string', description: 'UUID del pedido a enviar' },
-        },
-        required: ['order_uuid'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'check_duplicate_order',
-      description: 'Comprueba si existe un pedido reciente al mismo proveedor',
-      parameters: {
-        type: 'object',
-        properties: {
-          supplier_uuid: { type: 'string', description: 'UUID del proveedor' },
-          source_ref:    { type: 'string', description: 'Referencia externa a comparar' },
-          hours_window:  { type: 'number', description: 'Ventana de horas a comprobar (default 24)', default: 24 },
-        },
-        required: ['supplier_uuid'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_order_summary',
-      description: 'Resumen de pedidos recientes y métricas del dashboard',
-      parameters: {
-        type: 'object',
-        properties: {
-          days:   { type: 'number', description: 'Días hacia atrás (default 7)', default: 7 },
-          status: { type: 'string', enum: ['PENDING', 'SENT', 'COMPLETED', 'CANCELLED'], description: 'Filtrar por estado' },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'analyze_consumption',
-      description: 'Analiza el consumo de los últimos N días: qué se pide, con qué frecuencia y en qué cantidad',
-      parameters: {
-        type: 'object',
-        properties: {
-          days: { type: 'number', description: 'Días hacia atrás a analizar (default 90)', default: 90 },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'compare_prices',
-      description: 'Compara precios del mismo producto entre todos los proveedores disponibles',
-      parameters: {
-        type: 'object',
-        properties: {
-          product_name: { type: 'string', description: 'Nombre del producto a comparar' },
-        },
-        required: ['product_name'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'suggest_orders',
-      description: 'Genera sugerencias de pedidos basadas en el consumo histórico y comparativa de precios',
-      parameters: {
-        type: 'object',
-        properties: {
-          min_order_count: { type: 'number', description: 'Mínimo de pedidos previos para sugerir (default 2)', default: 2 },
-        },
       },
     },
   },
