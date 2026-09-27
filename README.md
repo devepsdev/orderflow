@@ -130,7 +130,6 @@ Los flujos están en `n8n-workflows/`. Se importan con la cuenta de envío de la
 | --- | --- | --- |
 | `pedidai-nuevo-registro.json` | Webhook `POST /webhook/pedidai-nuevo-registro`, llamado por la API de PedidAI tras cada registro | Envía por email la ficha del negocio: nombre, ciudad, contacto, email, teléfono, idioma y fin de la prueba |
 | `pedidai-resumen-diario.json` | Cada día a las 8:00 (Europe/Madrid) | Pide `GET http://127.0.0.1:8085/api/internal/daily-summary` y envía registros nuevos, pruebas que acaban en ≤ 3 días, pruebas vencidas, datos que se borrarán en < 7 días y actividad del día |
-| `process-order.json` | — | **Obsoleto.** Ejemplo inicial que llamaba a herramientas en `127.0.0.1:3200/tools`, que ya no existen. No se importa. |
 
 Detalles:
 
@@ -238,8 +237,7 @@ orderflow/
 │   └── .env.example
 ├── n8n-workflows/
 │   ├── pedidai-nuevo-registro.json
-│   ├── pedidai-resumen-diario.json
-│   └── process-order.json       # obsoleto
+│   └── pedidai-resumen-diario.json
 ├── data/n8n/                    # volumen de n8n (no versionado)
 ├── docker-compose.yml
 └── .env.example
