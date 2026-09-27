@@ -1,0 +1,86 @@
+{
+  "id": "PdNuevoRegistro1",
+  "name": "PedidAI · Aviso de registro nuevo",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "41f15b93-0637-4924-a8c5-eed3df6ad1ec",
+      "name": "Registro en PedidAI",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "bc5940f2-aab0-4665-80de-a2353e9d8ffc",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pedidai-nuevo-registro",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "5e457ca0-b02d-4997-a2ed-3e768140cb73",
+      "name": "Preparar email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Las fechas llegan de la API en hora UTC del servidor, sin zona\nconst esc = s => String(s ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst fecha = d => d ? new Date(String(d).endsWith('Z') ? d : d + 'Z').toLocaleString('es-ES', { timeZone: 'Europe/Madrid', dateStyle: 'short', timeStyle: 'short' }) : '—';\nconst idioma = l => ({ es: 'castellano', ca: 'catalán' }[l] || '—');\nconst fila = (k, v) => `<tr><td style=\"padding:4px 12px 4px 0;color:#64748b\">${k}</td><td style=\"padding:4px 0;color:#0f172a\">${v}</td></tr>`;\nconst ficha = c => `<table style=\"border-collapse:collapse;font-size:14px\">\n  ${fila('Negocio', `<b>${esc(c.name)}</b>${c.city ? ' · ' + esc(c.city) : ''}`)}\n  ${fila('Contacto', esc(c.adminName) || '—')}\n  ${fila('Email', c.adminEmail ? `<a href=\"mailto:${esc(c.adminEmail)}\">${esc(c.adminEmail)}</a>` : '—')}\n  ${fila('Teléfono', esc(c.phone) || '—')}\n  ${fila('Idioma', idioma(c.language))}\n  ${fila('Email verificado', c.emailVerified ? 'sí' : 'no')}\n  ${fila('Registro', fecha(c.createdAt))}\n  ${fila('Fin de la prueba', c.trialEndsAt ? fecha(c.trialEndsAt) : 'cliente de pago')}\n</table>`;\nconst plantilla = (titulo, cuerpo) => `<div style=\"font-family:Arial,sans-serif;max-width:640px;color:#0f172a\">\n  <h2 style=\"margin:0 0 12px\">${titulo}</h2>${cuerpo}\n  <p style=\"margin-top:24px;font-size:12px;color:#94a3b8\">Alerta interna de PedidAI generada por n8n.</p></div>`;\n\nconst c = $input.first().json.body || {};\nconst html = plantilla('Nuevo registro en PedidAI', ficha(c) +\n  '<p style=\"margin-top:16px\">Los primeros días deciden si se queda: escríbele o llámale para ayudarle a subir sus primeros albaranes.</p>');\nreturn [{ json: { subject: `Nuevo registro: ${c.name || 'sin nombre'}${c.city ? ' (' + c.city + ')' : ''}`, html } }];"
+      }
+    },
+    {
+      "id": "bc8fe506-5789-4724-bffb-36b01327b8c0",
+      "name": "Enviar email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "fromEmail": "PedidAI Alertas <__ALERT_EMAIL__>",
+        "toEmail": "__ALERT_EMAIL__",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Registro en PedidAI": {
+      "main": [
+        [
+          {
+            "node": "Preparar email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar email": {
+      "main": [
+        [
+          {
+            "node": "Enviar email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

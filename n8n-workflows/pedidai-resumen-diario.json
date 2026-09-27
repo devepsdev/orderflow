@@ -1,0 +1,116 @@
+{
+  "id": "PdResumenDiario1",
+  "name": "PedidAI · Resumen diario",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid",
+    "saveDataSuccessExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "a41499a0-cb21-4f1c-8e4b-ab3dc03744a1",
+      "name": "Cada día a las 8:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c279aa6d-81ab-403e-b790-232bc9498bc7",
+      "name": "Datos de PedidAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "url": "http://127.0.0.1:8085/api/internal/daily-summary?hours=24",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "e08239cd-f672-48f6-8e89-fe43f3e45da7",
+      "name": "Preparar email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Las fechas llegan de la API en hora UTC del servidor, sin zona\nconst esc = s => String(s ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst fecha = d => d ? new Date(String(d).endsWith('Z') ? d : d + 'Z').toLocaleString('es-ES', { timeZone: 'Europe/Madrid', dateStyle: 'short', timeStyle: 'short' }) : '—';\nconst idioma = l => ({ es: 'castellano', ca: 'catalán' }[l] || '—');\nconst fila = (k, v) => `<tr><td style=\"padding:4px 12px 4px 0;color:#64748b\">${k}</td><td style=\"padding:4px 0;color:#0f172a\">${v}</td></tr>`;\nconst ficha = c => `<table style=\"border-collapse:collapse;font-size:14px\">\n  ${fila('Negocio', `<b>${esc(c.name)}</b>${c.city ? ' · ' + esc(c.city) : ''}`)}\n  ${fila('Contacto', esc(c.adminName) || '—')}\n  ${fila('Email', c.adminEmail ? `<a href=\"mailto:${esc(c.adminEmail)}\">${esc(c.adminEmail)}</a>` : '—')}\n  ${fila('Teléfono', esc(c.phone) || '—')}\n  ${fila('Idioma', idioma(c.language))}\n  ${fila('Email verificado', c.emailVerified ? 'sí' : 'no')}\n  ${fila('Registro', fecha(c.createdAt))}\n  ${fila('Fin de la prueba', c.trialEndsAt ? fecha(c.trialEndsAt) : 'cliente de pago')}\n</table>`;\nconst plantilla = (titulo, cuerpo) => `<div style=\"font-family:Arial,sans-serif;max-width:640px;color:#0f172a\">\n  <h2 style=\"margin:0 0 12px\">${titulo}</h2>${cuerpo}\n  <p style=\"margin-top:24px;font-size:12px;color:#94a3b8\">Alerta interna de PedidAI generada por n8n.</p></div>`;\n\nconst s = $input.first().json;\nconst lista = (titulo, items, nota) => items && items.length\n  ? `<h3 style=\"margin:20px 0 6px\">${titulo} (${items.length})</h3>${nota ? `<p style=\"margin:0 0 8px;color:#64748b;font-size:13px\">${nota}</p>` : ''}` +\n    items.map(c => `<div style=\"border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px\">${ficha(c)}</div>`).join('')\n  : '';\nconst numeros = `<table style=\"border-collapse:collapse;font-size:14px\">\n  ${fila('Registros nuevos', `<b>${s.newCompanies.length}</b>`)}\n  ${fila('Líneas de albarán leídas', s.invoiceLinesRead)}\n  ${fila('Pedidos creados', s.ordersCreated)}\n  ${fila('Clientes en total', `${s.totalClients} (${s.inTrial} en prueba · ${s.paid} de pago · ${s.trialOver} con la prueba acabada)`)}\n</table>`;\nconst secciones = [\n  lista('Registros nuevos', s.newCompanies),\n  lista('Pruebas que acaban en 3 días o menos', s.trialsEndingSoon, 'Buen momento para llamar y ofrecer el plan.'),\n  lista('Pruebas acabadas sin contratar', s.trialsExpired, 'Su cuenta está suspendida hasta que contraten.'),\n  lista('Datos que se borrarán en menos de 7 días', s.deletionSoon, 'Último aviso antes del borrado automático (30 días tras la prueba).'),\n].join('');\nconst hoy = new Date().toLocaleDateString('es-ES', { timeZone: 'Europe/Madrid', day: 'numeric', month: 'long' });\nconst html = plantilla(`Resumen de PedidAI · últimas ${s.hours} h`, numeros + (secciones || '<p style=\"margin-top:16px\">Sin novedades en registros ni pruebas.</p>'));\nconst n = s.newCompanies.length;\nreturn [{ json: { subject: `PedidAI · Resumen del ${hoy}: ${n} ${n === 1 ? 'registro nuevo' : 'registros nuevos'}`, html } }];"
+      }
+    },
+    {
+      "id": "37ee8a72-d980-4d34-8320-c43894104937",
+      "name": "Enviar email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "fromEmail": "PedidAI Alertas <__ALERT_EMAIL__>",
+        "toEmail": "__ALERT_EMAIL__",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada día a las 8:00": {
+      "main": [
+        [
+          {
+            "node": "Datos de PedidAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos de PedidAI": {
+      "main": [
+        [
+          {
+            "node": "Preparar email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar email": {
+      "main": [
+        [
+          {
+            "node": "Enviar email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

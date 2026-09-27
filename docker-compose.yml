@@ -10,14 +10,17 @@ services:
   n8n:
     image: n8nio/n8n:latest
     restart: unless-stopped
-    ports:
-      - "5678:5678"
+    # Red del host (como mcp-bridge) para llamar a la API de PedidAI en 127.0.0.1:8085;
+    # escucha solo en local: se publica a través de nginx en /n8n/
+    network_mode: host
     environment:
       - DB_TYPE=sqlite
       - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
       - N8N_HOST=${N8N_HOST:?N8N_HOST is required, create .env from .env.example}
       - N8N_PROTOCOL=https
       - N8N_PORT=5678
+      - N8N_LISTEN_ADDRESS=127.0.0.1
+      - N8N_PATH=/n8n/
       - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL:?N8N_EDITOR_BASE_URL is required, create .env from .env.example}
       - WEBHOOK_URL=${WEBHOOK_URL:?WEBHOOK_URL is required, create .env from .env.example}
       - GENERIC_TIMEZONE=Europe/Madrid
@@ -25,9 +28,3 @@ services:
       - N8N_RUNNERS_ENABLED=false
     volumes:
       - ./data/n8n:/home/node/.n8n
-    networks:
-      - orderflow-net
-
-networks:
-  orderflow-net:
-    driver: bridge
