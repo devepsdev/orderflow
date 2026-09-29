@@ -4,7 +4,7 @@ Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
 
 - **Asistente de pedidos por chat** (`assistant`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con DeepSeek y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
 - **Sugerencias de pedido** (`assistant`): productos que el cliente suele pedir, con el proveedor más barato según sus albaranes.
-- **n8n**: automatizaciones internas del equipo de PedidAI (alertas por email de registros nuevos y resumen diario).
+- **n8n**: automatizaciones internas del equipo de PedidAI (alertas por email de registros nuevos, resumen diario y vigilancia de la web).
 
 ---
 
@@ -163,6 +163,7 @@ Los flujos están en `n8n-workflows/`. Se importan con la cuenta de envío de la
 | Archivo | Disparador | Qué hace |
 | --- | --- | --- |
 | `pedidai-nuevo-registro.json` | Webhook `POST /webhook/pedidai-nuevo-registro`, llamado por la API de PedidAI tras cada registro | Envía por email la ficha del negocio: nombre, ciudad, contacto, email, teléfono, idioma y fin de la prueba |
+| `pedidai-vigilancia.json` | Cada 5 minutos | Comprueba la web (`/`), la API (`/api/users/me` debe responder 401) y el asistente (`/ai/health`) con dos intentos, y envía un email solo cuando algo se cae o se recupera. El estado anterior se guarda en los datos estáticos del flujo. Si cae el servidor entero, n8n cae con él: para eso hace falta un monitor externo. |
 | `pedidai-resumen-diario.json` | Cada día a las 8:00 (Europe/Madrid) | Pide `GET http://127.0.0.1:8085/api/internal/daily-summary` y envía registros nuevos, pruebas que acaban en ≤ 3 días, pruebas vencidas, datos que se borrarán en < 7 días y actividad del día |
 
 Detalles:
@@ -175,8 +176,9 @@ Importación en el servidor:
 
 ```bash
 M=<cuenta de envío>   # la de MAIL_USER_PEDIDAI de la API
-for w in pedidai-nuevo-registro pedidai-resumen-diario; do
-  sed "s/__ALERT_EMAIL__/$M/g" n8n-workflows/$w.json > /tmp/$w.json
+C=<id de la credencial SMTP>   # SELECT id FROM credentials_entity en la base de n8n (vacío si aún no existe)
+for w in pedidai-nuevo-registro pedidai-resumen-diario pedidai-vigilancia; do
+  sed -e "s/__ALERT_EMAIL__/$M/g" -e "s/__SMTP_CREDENTIAL_ID__/$C/g" n8n-workflows/$w.json > /tmp/$w.json
   sudo docker cp /tmp/$w.json orderflow-n8n-1:/tmp/$w.json
   sudo docker exec -u node orderflow-n8n-1 n8n import:workflow --input=/tmp/$w.json
 done
@@ -271,7 +273,8 @@ orderflow/
 │   └── .env.example
 ├── n8n-workflows/
 │   ├── pedidai-nuevo-registro.json
-│   └── pedidai-resumen-diario.json
+│   ├── pedidai-resumen-diario.json
+│   └── pedidai-vigilancia.json
 ├── data/n8n/                    # volumen de n8n (no versionado)
 ├── docker-compose.yml
 └── .env.example
