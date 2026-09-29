@@ -2,7 +2,7 @@
 
 Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
 
-- **Asistente de pedidos por chat** (`mcp-server`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con DeepSeek y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
+- **Asistente de pedidos por chat** (`assistant`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con DeepSeek y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
 - **n8n**: automatizaciones internas del equipo de PedidAI (alertas por email de registros nuevos y resumen diario).
 
 ---
@@ -26,7 +26,7 @@ Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
 Navegador (app de PedidAI)
         │  https://pedidai.es/ai/…  (con el token JWT del usuario)
         ▼
-      nginx ───────────────► mcp-bridge  127.0.0.1:3201 ──► DeepSeek
+      nginx ───────────────► assistant   127.0.0.1:3201 ──► DeepSeek
                                   │
                                   │ REST con el mismo token
                                   ▼
@@ -39,12 +39,10 @@ Navegador (app de PedidAI)
 
 | Servicio | Tecnología | Puerto | Red |
 | --- | --- | --- | --- |
-| `mcp-bridge` | Node.js 20 + Express 5 | 3201 | `host`, escucha solo en `127.0.0.1` |
+| `assistant` | Node.js 20 + Express 5 | 3201 | `host`, escucha solo en `127.0.0.1` |
 | `n8n` | n8n 2.x (SQLite) | 5678 | `host`, escucha solo en `127.0.0.1` |
 
 Ninguno de los dos puertos se expone a Internet: nginx publica el asistente en `/ai/` y el editor de n8n en `/n8n/` (los webhooks de n8n quedan bloqueados desde fuera).
-
-> **Nota sobre el nombre `mcp-server`:** el asistente sigue la idea de MCP (una IA con una lista de herramientas que actúan sobre una aplicación), pero es un servidor Express que usa el *function calling* de DeepSeek; no implementa el protocolo MCP ni usa su SDK.
 
 ---
 
@@ -166,9 +164,9 @@ N8N_EDITOR_BASE_URL=https://pedidai.es/n8n/
 WEBHOOK_URL=https://pedidai.es/n8n/
 ```
 
-### `mcp-server/.env`
+### `assistant/.env`
 
-Ver `mcp-server/.env.example`:
+Ver `assistant/.env.example`:
 
 ```env
 PEDIDAI_API_URL=http://localhost:8085/api   # API vista desde el servidor, sin barra final
@@ -187,7 +185,7 @@ Ninguno de los dos `.env` se versiona.
 En local (sin Docker), con la API de PedidAI en marcha:
 
 ```bash
-cd mcp-server
+cd assistant
 cp .env.example .env      # y rellena PEDIDAI_API_URL y DEEPSEEK_API_KEY
 npm install
 npm start                 # http://127.0.0.1:3201/health
@@ -200,7 +198,7 @@ Con Docker:
 ```bash
 docker compose up -d                  # asistente y n8n
 docker compose ps
-docker compose logs -f mcp-bridge
+docker compose logs -f assistant
 docker compose logs -f n8n
 ```
 
@@ -213,7 +211,7 @@ En el VPS el repositorio está en `/opt/apps/orderflow` (rama local `master`, si
 ```bash
 cd /opt/apps/orderflow
 git fetch && git merge --ff-only origin/main
-sudo docker compose up -d --build mcp-bridge   # si cambia el asistente
+sudo docker compose up -d --build assistant   # si cambia el asistente
 sudo docker compose up -d n8n                  # si cambia la configuración de n8n
 curl -s http://127.0.0.1:3201/health           # {"status":"ok"}
 curl -s http://127.0.0.1:5678/healthz          # {"status":"ok"}
@@ -227,7 +225,7 @@ Los datos de n8n (flujos, credenciales cifradas e historial) viven en `data/n8n/
 
 ```text
 orderflow/
-├── mcp-server/
+├── assistant/
 │   ├── src/
 │   │   ├── http-bridge.js       # Express: autenticación, límites de uso, agente con DeepSeek, rutas
 │   │   ├── tools.js             # Herramientas de la IA y sugerencias de reposición

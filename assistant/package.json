@@ -1,5 +1,5 @@
 {
-  "name": "mcp-server",
+  "name": "pedidai-assistant",
   "version": "1.0.0",
   "main": "src/http-bridge.js",
   "type": "module",
@@ -9,7 +9,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Asistente de pedidos por chat de PedidAI (Express + DeepSeek)",
   "dependencies": {
     "dotenv": "^17.4.0",
     "express": "^5.2.1"

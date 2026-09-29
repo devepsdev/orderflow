@@ -1,8 +1,8 @@
 services:
-  mcp-bridge:
-    build: ./mcp-server
+  assistant:
+    build: ./assistant
     restart: unless-stopped
-    env_file: ./mcp-server/.env
+    env_file: ./assistant/.env
     environment:
       - PORT=3201
     network_mode: host
@@ -10,7 +10,7 @@ services:
   n8n:
     image: n8nio/n8n:latest
     restart: unless-stopped
-    # Red del host (como mcp-bridge) para llamar a la API de PedidAI en 127.0.0.1:8085;
+    # Red del host (como el asistente) para llamar a la API de PedidAI en 127.0.0.1:8085;
     # escucha solo en local: se publica a través de nginx en /n8n/
     network_mode: host
     environment:
