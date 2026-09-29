@@ -3,6 +3,7 @@
 Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
 
 - **Asistente de pedidos por chat** (`assistant`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con DeepSeek y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
+- **Sugerencias de pedido** (`assistant`): productos que el cliente suele pedir, con el proveedor más barato según sus albaranes.
 - **n8n**: automatizaciones internas del equipo de PedidAI (alertas por email de registros nuevos y resumen diario).
 
 ---
@@ -66,7 +67,23 @@ Herramientas que puede usar la IA (`src/tools.js`):
 | `check_duplicate_order` | Indica si ya hay un pedido pendiente reciente a ese proveedor |
 | `create_order` | Crea un pedido **pendiente** a un proveedor |
 
-Las sugerencias de reposición (`suggest_orders`) no usan IA: combinan el análisis de consumo de la API con la comparativa de precios.
+### Sugerencias de pedido
+
+Función `suggest_orders` (`src/tools.js`). **No usa IA**: aplica reglas sobre los datos del usuario y la app las muestra en *Sugerencias de pedido* y en el panel de inicio.
+
+1. Pide a la API el análisis de consumo de los últimos 180 días (`GET /api/orders/consumption-analysis?days=180`), que agrupa por producto las líneas de los pedidos `PENDING`, `SENT`, `CONFIRMED` y `COMPLETED`.
+2. Se queda con los productos pedidos al menos `min_order_count` veces (2 por defecto), hasta 15.
+3. Para cada uno busca el proveedor más barato en la comparativa de precios (`GET /api/products/compare-prices`) y calcula el ahorro frente al precio actual.
+4. Marca los productos que ya se han pedido en las últimas 48 h para no sugerirlos como urgentes.
+5. Asigna la urgencia y ordena la lista:
+
+| Urgencia | Regla |
+| --- | --- |
+| `high` | 5 pedidos o más en el periodo |
+| `medium` | 3 o 4 pedidos |
+| `low` | 2 pedidos, o pedido en las últimas 48 h |
+
+Desde la app, el usuario crea con un clic un pedido **pendiente** con la cantidad habitual al proveedor sugerido («Reposición: <producto>»). Como cualquier pedido, lo revisa y lo envía él; las notas van vacías para que el proveedor no reciba información interna.
 
 ---
 
@@ -110,13 +127,32 @@ Errores: `400` (mensaje vacío), `401` (token ausente o no válido), `429` (lím
 
 ### `POST /suggest-orders`
 
-Sugerencias de reposición según el consumo de los últimos 180 días (alias: `/suggestions`).
+Sugerencias de pedido según el consumo de los últimos 180 días (alias: `/suggestions`). Ver [Sugerencias de pedido](#sugerencias-de-pedido).
 
 ```json
 { "min_order_count": 2 }
 ```
 
-Devuelve una lista ordenada por urgencia (`high`, `medium`, `low`) con producto, proveedor más barato, cantidad habitual, precio y porcentaje de ahorro estimado.
+Devuelve una lista ordenada por urgencia:
+
+```json
+[
+  {
+    "urgency": "high",
+    "product": "Tomate pera",
+    "product_uuid": "…",
+    "supplier": "Frutas Martínez",
+    "supplier_uuid": "…",
+    "quantity": 10,
+    "unit": "kg",
+    "price": 1.55,
+    "estimated_savings_percent": 16
+  },
+  { "urgency": "low", "recentlyOrdered": true, "product": "Agua mineral", "…": "…" }
+]
+```
+
+Errores: `401` (token ausente o no válido), `429` (más de 60 peticiones por hora), `502` (la API de PedidAI no responde).
 
 ---
 
@@ -228,7 +264,7 @@ orderflow/
 ├── assistant/
 │   ├── src/
 │   │   ├── http-bridge.js       # Express: autenticación, límites de uso, agente con DeepSeek, rutas
-│   │   ├── tools.js             # Herramientas de la IA y sugerencias de reposición
+│   │   ├── tools.js             # Herramientas de la IA y sugerencias de pedido
 │   │   └── pedidai-client.js    # Cliente REST de la API de PedidAI (token e idioma del usuario)
 │   ├── Dockerfile               # Node 20 Alpine
 │   ├── package.json
