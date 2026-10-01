@@ -54,6 +54,7 @@ Principios de diseño:
 - **Actúa con la sesión del usuario.** Cada petición trae el token JWT de quien usa la app; el asistente lo valida contra `GET /api/users/me` y hace todas las llamadas a la API con ese mismo token. No existe ninguna cuenta fija: la IA solo ve y crea datos de la empresa del usuario, con sus mismos permisos.
 - **Nunca envía pedidos.** Solo crea pedidos en estado `PENDING`; el usuario los revisa y los envía desde la app.
 - **Los pedidos devueltos son los reales.** La respuesta incluye los pedidos tal como los ha creado la API, no el texto que genera la IA.
+- **El ahorro lo calcula el código, no la IA.** `compare_prices` guarda el precio más caro de cada producto y `create_order` devuelve `savings_vs_most_expensive` (Σ (precio más caro − precio elegido) × cantidad); la IA solo lo repite en su mensaje.
 - **Bilingüe.** Responde en castellano o catalán según el idioma del usuario (`Accept-Language` y su perfil).
 - **Límites de uso** por usuario para controlar el coste de la IA: 30 mensajes por hora y 150 por día en el chat; 60 peticiones de sugerencias por hora.
 
@@ -65,7 +66,7 @@ Herramientas que puede usar la IA (`src/tools.js`):
 | `search_suppliers` | Busca proveedores del usuario por nombre |
 | `get_supplier_products` | Productos de un proveedor con precio y unidad |
 | `check_duplicate_order` | Indica si ya hay un pedido pendiente reciente a ese proveedor |
-| `create_order` | Crea un pedido **pendiente** a un proveedor |
+| `create_order` | Crea un pedido **pendiente** a un proveedor y devuelve el ahorro frente al proveedor más caro |
 
 ### Sugerencias de pedido
 
