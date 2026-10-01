@@ -23,6 +23,12 @@ export async function get_supplier_products(client, { supplier_uuid } = {}) {
 /** Precio vigente del producto en cada proveedor (según los últimos albaranes), del más barato al más caro. */
 export async function compare_prices(client, { product_name } = {}) {
   const groups = await client.comparePrices(product_name);
+  // Precio más caro de cada grupo, para que create_order calcule el ahorro sin depender de la IA
+  client.maxPriceByProduct ??= new Map();
+  for (const g of groups) {
+    const max = Math.max(...g.offers.map(o => Number(o.latestPrice) || 0));
+    for (const o of g.offers) client.maxPriceByProduct.set(o.productUuid, max);
+  }
   return groups.slice(0, 5).map(g => ({
     product: g.name,
     unit: g.unit,
@@ -55,12 +61,20 @@ export async function create_order(client, { supplier_uuid, name, items, notes =
     items: (items || []).map(i => ({ productUuid: i.productUuid, quantity: i.quantity })),
     notes,
   });
+  let savings = 0;
+  for (const i of items || []) {
+    const max = client.maxPriceByProduct?.get(i.productUuid);
+    const line = order.items.find(it => it.productUuid === i.productUuid);
+    const unitPrice = Number(line?.unitPrice);
+    if (max && unitPrice && max > unitPrice) savings += (max - unitPrice) * Number(i.quantity);
+  }
   return {
     uuid: order.uuid,
     name: order.name,
     status: order.status,
     supplier_name: order.supplierName,
     total: order.totalAmount,
+    savings_vs_most_expensive: Math.round(savings * 100) / 100,
     items: order.items.map(i => ({ product: i.productName, quantity: i.quantity, unit_price: i.unitPrice, subtotal: i.subtotal })),
   };
 }
