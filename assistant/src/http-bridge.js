@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { createClient } from './pedidai-client.js';
 import { CHAT_TOOLS, CHAT_TOOL_SCHEMAS, suggest_orders } from './tools.js';
 
-// Puente entre la app de PedidAI y la IA (DeepSeek).
+// Puente entre la app de PedidAI y la IA (Mistral por defecto; cualquier API compatible con OpenAI).
 // Cada petición se ejecuta con el token del usuario: la IA solo ve y crea datos de su empresa
 // y nunca envía pedidos (los deja pendientes para que el usuario los revise y envíe).
 
@@ -12,8 +12,8 @@ const app = express();
 app.use(express.json({ limit: '32kb' }));
 app.disable('x-powered-by');
 
-const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
-const MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+const AI_URL = process.env.AI_API_URL || 'https://api.mistral.ai/v1/chat/completions';
+const MODEL = process.env.AI_MODEL || 'mistral-medium-latest';
 const MAX_CHAT_CHARS = 1500;
 
 // ─── Autenticación: el token del usuario se valida contra PedidAI ─────────────
@@ -92,20 +92,19 @@ function extractJson(text) {
   return null;
 }
 
-async function callDeepSeek(messages, toolChoice = 'auto') {
-  const r = await fetch(DEEPSEEK_URL, {
+async function callAi(messages, toolChoice = 'auto') {
+  const r = await fetch(AI_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AI_API_KEY}` },
     body: JSON.stringify({
-      model: MODEL, messages, tools: CHAT_TOOL_SCHEMAS, tool_choice: toolChoice,
-      temperature: 0.1, thinking: { type: 'disabled' },
+      model: MODEL, messages, tools: CHAT_TOOL_SCHEMAS, tool_choice: toolChoice, temperature: 0.1,
     }),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!r.ok) throw new Error(`DeepSeek HTTP ${r.status}`);
+  if (!r.ok) throw new Error(`IA HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = await r.json();
   const message = data.choices?.[0]?.message;
-  if (!message) throw new Error('DeepSeek sin respuesta');
+  if (!message) throw new Error('La IA no ha devuelto respuesta');
   return message;
 }
 
@@ -116,7 +115,7 @@ async function runChatAgent(ctx, text) {
   ];
   const createdOrders = [];
 
-  let message = await callDeepSeek(messages);
+  let message = await callAi(messages);
   messages.push(message);
 
   for (let i = 0; i < 12 && message.tool_calls?.length; i++) {
@@ -131,18 +130,18 @@ async function runChatAgent(ctx, text) {
       } catch (err) {
         result = { error: err.message };
       }
-      messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+      messages.push({ role: 'tool', name: tc.function.name, tool_call_id: tc.id, content: JSON.stringify(result) });
     }
-    message = await callDeepSeek(messages);
+    message = await callAi(messages);
     messages.push(message);
   }
 
   // Si se agotaron las iteraciones con llamadas pendientes, se pide un cierre sin herramientas
   if (message.tool_calls?.length) {
     for (const tc of message.tool_calls) {
-      messages.push({ role: 'tool', tool_call_id: tc.id, content: '{"error":"límite de pasos alcanzado"}' });
+      messages.push({ role: 'tool', name: tc.function.name, tool_call_id: tc.id, content: '{"error":"límite de pasos alcanzado"}' });
     }
-    message = await callDeepSeek(messages, 'none');
+    message = await callAi(messages, 'none');
   }
 
   const result = extractJson(message.content) || {};

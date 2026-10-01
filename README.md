@@ -2,7 +2,7 @@
 
 Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
 
-- **Asistente de pedidos por chat** (`assistant`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con DeepSeek y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
+- **Asistente de pedidos por chat** (`assistant`): interpreta frases como «10 kg de tomates y 5 garrafas de agua» con IA (Mistral AI) y prepara los pedidos al proveedor más barato a través de la API de PedidAI.
 - **Sugerencias de pedido** (`assistant`): productos que el cliente suele pedir, con el proveedor más barato según sus albaranes.
 - **n8n**: automatizaciones internas del equipo de PedidAI (alertas por email de registros nuevos, resumen diario y vigilancia de la web).
 
@@ -27,7 +27,7 @@ Servicios de apoyo de [PedidAI](https://pedidai.es) desplegados con Docker:
 Navegador (app de PedidAI)
         │  https://pedidai.es/ai/…  (con el token JWT del usuario)
         ▼
-      nginx ───────────────► assistant   127.0.0.1:3201 ──► DeepSeek
+      nginx ───────────────► assistant   127.0.0.1:3201 ──► Mistral AI
                                   │
                                   │ REST con el mismo token
                                   ▼
@@ -208,8 +208,9 @@ Ver `assistant/.env.example`:
 
 ```env
 PEDIDAI_API_URL=http://localhost:8085/api   # API vista desde el servidor, sin barra final
-DEEPSEEK_API_KEY=                           # clave de DeepSeek
-# DEEPSEEK_MODEL=deepseek-v4-flash
+AI_API_KEY=                                 # clave de Mistral AI (pago por uso, entrenamiento desactivado)
+# AI_API_URL=https://api.mistral.ai/v1/chat/completions
+# AI_MODEL=mistral-medium-latest
 # HOST=127.0.0.1
 # PORT=3201
 ```
@@ -224,7 +225,7 @@ En local (sin Docker), con la API de PedidAI en marcha:
 
 ```bash
 cd assistant
-cp .env.example .env      # y rellena PEDIDAI_API_URL y DEEPSEEK_API_KEY
+cp .env.example .env      # y rellena PEDIDAI_API_URL y AI_API_KEY
 npm install
 npm start                 # http://127.0.0.1:3201/health
 ```
@@ -265,7 +266,7 @@ Los datos de n8n (flujos, credenciales cifradas e historial) viven en `data/n8n/
 orderflow/
 ├── assistant/
 │   ├── src/
-│   │   ├── http-bridge.js       # Express: autenticación, límites de uso, agente con DeepSeek, rutas
+│   │   ├── http-bridge.js       # Express: autenticación, límites de uso, agente con IA, rutas
 │   │   ├── tools.js             # Herramientas de la IA y sugerencias de pedido
 │   │   └── pedidai-client.js    # Cliente REST de la API de PedidAI (token e idioma del usuario)
 │   ├── Dockerfile               # Node 20 Alpine
