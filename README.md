@@ -62,7 +62,7 @@ Herramientas que puede usar la IA (`src/tools.js`):
 
 | Herramienta | Qué hace |
 | --- | --- |
-| `compare_prices` | Proveedores que tienen un producto y su precio vigente según los albaranes, del más barato al más caro |
+| `compare_prices` | Proveedores que tienen un producto y su precio vigente según su último albarán o tarifa, del más barato al más caro (`quoted` y `valid_until` en los precios de tarifa) |
 | `search_suppliers` | Busca proveedores del usuario por nombre |
 | `get_supplier_products` | Productos de un proveedor con precio y unidad |
 | `check_duplicate_order` | Indica si ya hay un pedido pendiente reciente a ese proveedor |

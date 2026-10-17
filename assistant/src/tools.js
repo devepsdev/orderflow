@@ -20,7 +20,10 @@ export async function get_supplier_products(client, { supplier_uuid } = {}) {
   }));
 }
 
-/** Precio vigente del producto en cada proveedor (según los últimos albaranes), del más barato al más caro. */
+/**
+ * Precio vigente del producto en cada proveedor (según su último albarán o tarifa), del más barato al más caro.
+ * quoted=true: precio ofrecido en una tarifa o presupuesto, todavía no pagado.
+ */
 export async function compare_prices(client, { product_name } = {}) {
   const groups = await client.comparePrices(product_name);
   // Precio más caro de cada grupo, para que create_order calcule el ahorro sin depender de la IA
@@ -41,6 +44,8 @@ export async function compare_prices(client, { product_name } = {}) {
       price: o.latestPrice,
       price_date: o.latestDate,
       cheapest: o.cheapest,
+      quoted: !!o.quoted,
+      ...(o.quoted ? { valid_until: o.validUntil } : {}),
     })),
   }));
 }
@@ -133,7 +138,7 @@ export const CHAT_TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'compare_prices',
-      description: 'Devuelve los proveedores del usuario que tienen un producto y su precio vigente según los últimos albaranes, del más barato al más caro. Busca por nombre genérico en castellano y singular (ej: "tomate", "agua mineral").',
+      description: 'Devuelve los proveedores del usuario que tienen un producto y su precio vigente según su último albarán o tarifa, del más barato al más caro. quoted=true indica un precio ofrecido en una tarifa o presupuesto (todavía no se le ha comprado a ese precio). Busca por nombre genérico en castellano y singular (ej: "tomate", "agua mineral").',
       parameters: {
         type: 'object',
         properties: { product_name: { type: 'string', description: 'Nombre genérico del producto en castellano' } },
