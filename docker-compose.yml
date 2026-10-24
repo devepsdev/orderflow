@@ -8,7 +8,7 @@ services:
     network_mode: host
 
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:2.15.1  # versión fija: actualizar a propósito, no por accidente
     restart: unless-stopped
     # Red del host (como el asistente) para llamar a la API de PedidAI en 127.0.0.1:8085;
     # escucha solo en local: se publica a través de nginx en /n8n/
