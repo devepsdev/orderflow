@@ -13,7 +13,7 @@ app.use(express.json({ limit: '32kb' }));
 app.disable('x-powered-by');
 
 const AI_URL = process.env.AI_API_URL || 'https://api.mistral.ai/v1/chat/completions';
-const MODEL = process.env.AI_MODEL || 'mistral-medium-latest';
+const MODEL = process.env.AI_MODEL || 'mistral-medium-2604';
 const MAX_CHAT_CHARS = 1500;
 
 // ─── Autenticación: el token del usuario se valida contra PedidAI ─────────────

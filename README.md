@@ -211,7 +211,7 @@ Ver `assistant/.env.example`:
 PEDIDAI_API_URL=http://localhost:8085/api   # API vista desde el servidor, sin barra final
 AI_API_KEY=                                 # clave de Mistral AI (pago por uso, entrenamiento desactivado)
 # AI_API_URL=https://api.mistral.ai/v1/chat/completions
-# AI_MODEL=mistral-medium-latest
+# AI_MODEL=mistral-medium-2604
 # HOST=127.0.0.1
 # PORT=3201
 ```
